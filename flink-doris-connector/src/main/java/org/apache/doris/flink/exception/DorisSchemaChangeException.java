@@ -15,23 +15,31 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package org.apache.doris.flink.sink.writer.serializer;
-
-import java.io.IOException;
-import java.io.Serializable;
+package org.apache.doris.flink.exception;
 
 /**
- * How to serialize the record to bytes.
- * @param <T>
+ * Doris Schema Change run exception.
  */
-public interface DorisRecordSerializer<T> extends Serializable {
+public class DorisSchemaChangeException extends RuntimeException {
+    public DorisSchemaChangeException() {
+        super();
+    }
 
-    /**
-     * define how to convert record into byte array.
-     * @param record
-     * @return [tableIdentifer,byte array]
-     * @throws IOException
-     */
-    DorisRecord serialize(T record) throws IOException;
+    public DorisSchemaChangeException(String message) {
+        super(message);
+    }
 
+    public DorisSchemaChangeException(String message, Throwable cause) {
+        super(message, cause);
+    }
+
+    public DorisSchemaChangeException(Throwable cause) {
+        super(cause);
+    }
+
+    protected DorisSchemaChangeException(String message, Throwable cause,
+                                         boolean enableSuppression,
+                                         boolean writableStackTrace) {
+        super(message, cause, enableSuppression, writableStackTrace);
+    }
 }

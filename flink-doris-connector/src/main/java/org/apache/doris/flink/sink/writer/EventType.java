@@ -15,23 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package org.apache.doris.flink.sink.writer.serializer;
+package org.apache.doris.flink.sink.writer;
 
-import java.io.IOException;
-import java.io.Serializable;
-
-/**
- * How to serialize the record to bytes.
- * @param <T>
- */
-public interface DorisRecordSerializer<T> extends Serializable {
-
-    /**
-     * define how to convert record into byte array.
-     * @param record
-     * @return [tableIdentifer,byte array]
-     * @throws IOException
-     */
-    DorisRecord serialize(T record) throws IOException;
-
+public enum EventType {
+    ALTER,
+    CREATE
 }
