@@ -14,8 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 package org.apache.doris.flink.catalog.doris;
 
+import org.apache.flink.annotation.Public;
+import org.apache.flink.util.StringUtils;
 
 import org.apache.commons.compress.utils.Lists;
 import org.apache.doris.flink.cfg.DorisConnectionOptions;
@@ -24,11 +27,10 @@ import org.apache.doris.flink.connection.SimpleJdbcConnectionProvider;
 import org.apache.doris.flink.exception.CreateTableException;
 import org.apache.doris.flink.exception.DorisRuntimeException;
 import org.apache.doris.flink.exception.DorisSystemException;
-import org.apache.flink.annotation.Public;
-import org.apache.flink.util.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Serializable;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
@@ -41,14 +43,14 @@ import java.util.stream.Collectors;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 
-/**
- * Doris System Operate
- */
+/** Doris System Operate. */
 @Public
-public class DorisSystem {
+public class DorisSystem implements Serializable {
+    private static final long serialVersionUID = 1L;
     private static final Logger LOG = LoggerFactory.getLogger(DorisSystem.class);
     private final JdbcConnectionProvider jdbcConnectionProvider;
-    private static final List<String> builtinDatabases = Collections.singletonList("information_schema");
+    private static final List<String> builtinDatabases =
+            Collections.singletonList("information_schema");
 
     public DorisSystem(DorisConnectionOptions options) {
         this.jdbcConnectionProvider = new SimpleJdbcConnectionProvider(options);
@@ -76,9 +78,25 @@ public class DorisSystem {
         return true;
     }
 
-    public boolean tableExists(String database, String table){
-        return databaseExists(database)
-                && listTables(database).contains(table);
+    public boolean tableExists(String database, String table) {
+        return databaseExists(database) && listTables(database).contains(table);
+    }
+
+    public boolean columnExists(String database, String table, String columnName) {
+        if (tableExists(database, table)) {
+            List<String> columns =
+                    extractColumnValuesBySQL(
+                            "SELECT COLUMN_NAME FROM information_schema.`COLUMNS` WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+                            1,
+                            null,
+                            database,
+                            table,
+                            columnName);
+            if (columns != null && !columns.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public List<String> listTables(String databaseName) {
@@ -103,21 +121,21 @@ public class DorisSystem {
     }
 
     public void execute(String sql) {
-        try (Statement statement = jdbcConnectionProvider.getOrEstablishConnection().createStatement()) {
+        try (Statement statement =
+                jdbcConnectionProvider.getOrEstablishConnection().createStatement()) {
             statement.execute(sql);
-        } catch (Exception e){
-            throw new DorisSystemException(String.format("SQL query could not be executed: %s", sql), e);
+        } catch (Exception e) {
+            throw new DorisSystemException(
+                    String.format("SQL query could not be executed: %s", sql), e);
         }
     }
 
     public List<String> extractColumnValuesBySQL(
-            String sql,
-            int columnIndex,
-            Predicate<String> filterFunc,
-            Object... params) {
+            String sql, int columnIndex, Predicate<String> filterFunc, Object... params) {
 
         List<String> columnValues = Lists.newArrayList();
-        try (PreparedStatement ps = jdbcConnectionProvider.getOrEstablishConnection().prepareStatement(sql)) {
+        try (PreparedStatement ps =
+                jdbcConnectionProvider.getOrEstablishConnection().prepareStatement(sql)) {
             if (Objects.nonNull(params) && params.length > 0) {
                 for (int i = 0; i < params.length; i++) {
                     ps.setObject(i + 1, params[i]);
@@ -133,13 +151,11 @@ public class DorisSystem {
             return columnValues;
         } catch (Exception e) {
             throw new DorisSystemException(
-                    String.format(
-                            "The following SQL query could not be executed: %s", sql),
-                    e);
+                    String.format("The following SQL query could not be executed: %s", sql), e);
         }
     }
 
-    public String buildCreateTableDDL(TableSchema schema) {
+    public static String buildCreateTableDDL(TableSchema schema) {
         StringBuilder sb = new StringBuilder("CREATE TABLE IF NOT EXISTS ");
         sb.append(identifier(schema.getDatabase()))
                 .append(".")
@@ -148,47 +164,44 @@ public class DorisSystem {
 
         Map<String, FieldSchema> fields = schema.getFields();
         List<String> keys = schema.getKeys();
-        //append keys
-        for(String key : keys){
-            if(!fields.containsKey(key)){
+        // append keys
+        for (String key : keys) {
+            if (!fields.containsKey(key)) {
                 throw new CreateTableException("key " + key + " not found in column list");
             }
             FieldSchema field = fields.get(key);
             buildColumn(sb, field, true);
         }
 
-        //append values
+        // append values
         for (Map.Entry<String, FieldSchema> entry : fields.entrySet()) {
-            if(keys.contains(entry.getKey())){
+            if (keys.contains(entry.getKey())) {
                 continue;
             }
             FieldSchema field = entry.getValue();
             buildColumn(sb, field, false);
-
         }
-        sb = sb.deleteCharAt(sb.length() -1);
+        sb = sb.deleteCharAt(sb.length() - 1);
         sb.append(" ) ");
-        //append uniq model
-        if(DataModel.UNIQUE.equals(schema.getModel())){
+        // append uniq model
+        if (DataModel.UNIQUE.equals(schema.getModel())) {
             sb.append(schema.getModel().name())
                     .append(" KEY(")
                     .append(String.join(",", identifier(schema.getKeys())))
                     .append(")");
         }
 
-        //append table comment
-        if(!StringUtils.isNullOrWhitespaceOnly(schema.getTableComment())){
-            sb.append(" COMMENT '")
-                    .append(quoteComment(schema.getTableComment()))
-                    .append("' ");
+        // append table comment
+        if (!StringUtils.isNullOrWhitespaceOnly(schema.getTableComment())) {
+            sb.append(" COMMENT '").append(quoteComment(schema.getTableComment())).append("' ");
         }
 
-        //append distribute key
+        // append distribute key
         sb.append(" DISTRIBUTED BY HASH(")
                 .append(String.join(",", identifier(schema.getDistributeKeys())))
                 .append(") BUCKETS AUTO ");
 
-        //append properties
+        // append properties
         int index = 0;
         for (Map.Entry<String, String> entry : schema.getProperties().entrySet()) {
             if (index == 0) {
@@ -209,9 +222,9 @@ public class DorisSystem {
         return sb.toString();
     }
 
-    private void buildColumn(StringBuilder sql, FieldSchema field, boolean isKey){
+    private static void buildColumn(StringBuilder sql, FieldSchema field, boolean isKey) {
         String fieldType = field.getTypeString();
-        if(isKey && DorisType.STRING.equals(fieldType)){
+        if (isKey && DorisType.STRING.equals(fieldType)) {
             fieldType = String.format("%s(%s)", DorisType.VARCHAR, 65533);
         }
         sql.append(identifier(field.getName()))
@@ -222,25 +235,24 @@ public class DorisSystem {
                 .append("',");
     }
 
-    private String quoteComment(String comment){
-        if(comment == null){
+    private static String quoteComment(String comment) {
+        if (comment == null) {
             return "";
         } else {
-            return comment.replaceAll("'","\\\\'");
+            return comment.replaceAll("'", "\\\\'");
         }
     }
 
-    private List<String> identifier(List<String> name) {
+    private static List<String> identifier(List<String> name) {
         List<String> result = name.stream().map(m -> identifier(m)).collect(Collectors.toList());
         return result;
     }
 
-    private String identifier(String name) {
+    private static String identifier(String name) {
         return "`" + name + "`";
     }
 
-    private String quoteProperties(String name) {
+    private static String quoteProperties(String name) {
         return "'" + name + "'";
     }
-
 }

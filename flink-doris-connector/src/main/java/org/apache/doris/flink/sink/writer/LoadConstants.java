@@ -17,9 +17,7 @@
 
 package org.apache.doris.flink.sink.writer;
 
-/**
- * Constants for load.
- */
+/** Constants for load. */
 public class LoadConstants {
     public static final String COLUMNS_KEY = "columns";
     public static final String FIELD_DELIMITER_KEY = "column_separator";
@@ -31,5 +29,5 @@ public class LoadConstants {
     public static final String CSV = "csv";
     public static final String NULL_VALUE = "\\N";
     public static final String DORIS_DELETE_SIGN = "__DORIS_DELETE_SIGN__";
-
+    public static final String READ_JSON_BY_LINE = "read_json_by_line";
 }

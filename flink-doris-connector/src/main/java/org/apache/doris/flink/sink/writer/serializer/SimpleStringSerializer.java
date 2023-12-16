@@ -15,18 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package org.apache.doris.flink.sink.writer;
+package org.apache.doris.flink.sink.writer.serializer;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
-/**
- * String Serializer.
- */
+/** String Serializer. */
 public class SimpleStringSerializer implements DorisRecordSerializer<String> {
 
     @Override
-    public byte[] serialize(String record) throws IOException {
-        return record.getBytes(StandardCharsets.UTF_8);
+    public DorisRecord serialize(String record) throws IOException {
+        return DorisRecord.of(record.getBytes(StandardCharsets.UTF_8));
     }
 }

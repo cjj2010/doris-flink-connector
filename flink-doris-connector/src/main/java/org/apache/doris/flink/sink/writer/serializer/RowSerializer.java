@@ -15,45 +15,50 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package org.apache.doris.flink.sink.writer;
+package org.apache.doris.flink.sink.writer.serializer;
 
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.conversion.RowRowConverter;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.types.Row;
-import org.apache.flink.types.RowKind;
 import org.apache.flink.util.Preconditions;
+
 import java.io.IOException;
+
 import static org.apache.doris.flink.sink.writer.LoadConstants.CSV;
 import static org.apache.doris.flink.sink.writer.LoadConstants.JSON;
 
 /**
- * Serializer for {@link Row}.
- * Quick way to support RowSerializer on existing code
- * TODO: support original Doris to Row serializer
+ * Serializer for {@link Row}. Quick way to support RowSerializer on existing code.
+ *
+ * <p>TODO: support original Doris to Row serializer
  */
 public class RowSerializer implements DorisRecordSerializer<Row> {
-    /**
-     * converter {@link Row} to {@link RowData}
-     */
+    /** converter {@link Row} to {@link RowData}. */
     private final RowRowConverter rowRowConverter;
+
     private final RowDataSerializer rowDataSerializer;
 
-    private RowSerializer(String[] fieldNames, DataType[] dataTypes, String type, String fieldDelimiter,
-                          boolean enableDelete) {
+    private RowSerializer(
+            String[] fieldNames,
+            DataType[] dataTypes,
+            String type,
+            String fieldDelimiter,
+            boolean enableDelete) {
         this.rowRowConverter = RowRowConverter.create(DataTypes.ROW(dataTypes));
-        this.rowDataSerializer = RowDataSerializer.builder()
-                .setFieldNames(fieldNames)
-                .setFieldType(dataTypes)
-                .setType(type)
-                .setFieldDelimiter(fieldDelimiter)
-                .enableDelete(enableDelete)
-                .build();
+        this.rowDataSerializer =
+                RowDataSerializer.builder()
+                        .setFieldNames(fieldNames)
+                        .setFieldType(dataTypes)
+                        .setType(type)
+                        .setFieldDelimiter(fieldDelimiter)
+                        .enableDelete(enableDelete)
+                        .build();
     }
 
     @Override
-    public byte[] serialize(Row record) throws IOException{
+    public DorisRecord serialize(Row record) throws IOException {
         RowData rowDataRecord = this.rowRowConverter.toInternal(record);
         return this.rowDataSerializer.serialize(rowDataRecord);
     }
@@ -62,9 +67,7 @@ public class RowSerializer implements DorisRecordSerializer<Row> {
         return new Builder();
     }
 
-    /**
-     * Builder for RowSerializer.
-     */
+    /** Builder for RowSerializer. */
     public static class Builder {
         private String[] fieldNames;
         private DataType[] dataTypes;
@@ -98,7 +101,8 @@ public class RowSerializer implements DorisRecordSerializer<Row> {
         }
 
         public RowSerializer build() {
-            Preconditions.checkState(CSV.equals(type) && fieldDelimiter != null || JSON.equals(type));
+            Preconditions.checkState(
+                    CSV.equals(type) && fieldDelimiter != null || JSON.equals(type));
             Preconditions.checkNotNull(dataTypes);
             Preconditions.checkNotNull(fieldNames);
             return new RowSerializer(fieldNames, dataTypes, type, fieldDelimiter, deletable);

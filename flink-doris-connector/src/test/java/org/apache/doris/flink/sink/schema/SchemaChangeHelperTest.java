@@ -15,11 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package org.apache.doris.flink.sink.writer;
+package org.apache.doris.flink.sink.schema;
 
+import com.google.common.collect.Maps;
 import org.apache.doris.flink.catalog.doris.FieldSchema;
-
-import org.apache.flink.shaded.guava30.com.google.common.collect.Maps;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -50,8 +49,9 @@ public class SchemaChangeHelperTest {
         String table = "test.test_sink";
         String oldColumnName = "c3";
         String newColumnName = "c33";
-        List<String> ddlSqls = SchemaChangeHelper.generateRenameDDLSql(table, oldColumnName, newColumnName,
-                originFieldSchemaMap);
+        List<String> ddlSqls =
+                SchemaChangeHelper.generateRenameDDLSql(
+                        table, oldColumnName, newColumnName, originFieldSchemaMap);
         Assert.assertEquals(ddlSqls.get(0), "ALTER TABLE test.test_sink RENAME COLUMN c3 c33");
     }
 
@@ -60,6 +60,7 @@ public class SchemaChangeHelperTest {
         SchemaChangeHelper.compareSchema(updateFieldSchemaMap, originFieldSchemaMap);
         List<String> ddlSqls = SchemaChangeHelper.generateDDLSql("test.test_sink");
         Assert.assertEquals(ddlSqls.get(0), "ALTER TABLE test.test_sink ADD COLUMN c4 BIGINT");
-        Assert.assertEquals(ddlSqls.get(1), "ALTER TABLE test.test_sink ADD COLUMN c5 DATETIMEV2(0)");
+        Assert.assertEquals(
+                ddlSqls.get(1), "ALTER TABLE test.test_sink ADD COLUMN c5 DATETIMEV2(0)");
     }
 }
