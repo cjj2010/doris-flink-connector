@@ -18,6 +18,7 @@
 package org.apache.doris.flink.catalog.doris;
 
 import org.apache.flink.annotation.Public;
+import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.StringUtils;
 
 import org.apache.commons.compress.utils.Lists;
@@ -48,6 +49,7 @@ import static org.apache.flink.util.Preconditions.checkArgument;
 public class DorisSystem implements Serializable {
     private static final long serialVersionUID = 1L;
     private static final Logger LOG = LoggerFactory.getLogger(DorisSystem.class);
+    private static final String TABLE_BUCKETS = "table-buckets";
     private final JdbcConnectionProvider jdbcConnectionProvider;
     private static final List<String> builtinDatabases =
             Collections.singletonList("information_schema");
@@ -199,11 +201,28 @@ public class DorisSystem implements Serializable {
         // append distribute key
         sb.append(" DISTRIBUTED BY HASH(")
                 .append(String.join(",", identifier(schema.getDistributeKeys())))
-                .append(") BUCKETS AUTO ");
+                .append(")");
 
+        Map<String, String> properties = schema.getProperties();
+        if (schema.getTableBuckets() != null) {
+
+            int bucketsNum = schema.getTableBuckets();
+            if (bucketsNum <= 0) {
+                throw new CreateTableException("The number of buckets must be positive.");
+            }
+            sb.append(" BUCKETS ").append(bucketsNum);
+        } else {
+            sb.append(" BUCKETS AUTO ");
+        }
         // append properties
         int index = 0;
-        for (Map.Entry<String, String> entry : schema.getProperties().entrySet()) {
+        int skipProNum = 0;
+        for (Map.Entry<String, String> entry : properties.entrySet()) {
+            // skip table-buckets
+            if (entry.getKey().equals(TABLE_BUCKETS)) {
+                skipProNum++;
+                continue;
+            }
             if (index == 0) {
                 sb.append(" PROPERTIES (");
             }
@@ -215,7 +234,7 @@ public class DorisSystem implements Serializable {
                     .append(quoteProperties(entry.getValue()));
             index++;
 
-            if (index == schema.getProperties().size()) {
+            if (index == (schema.getProperties().size() - skipProNum)) {
                 sb.append(")");
             }
         }
@@ -227,15 +246,23 @@ public class DorisSystem implements Serializable {
         if (isKey && DorisType.STRING.equals(fieldType)) {
             fieldType = String.format("%s(%s)", DorisType.VARCHAR, 65533);
         }
-        sql.append(identifier(field.getName()))
-                .append(" ")
-                .append(fieldType)
-                .append(" COMMENT '")
-                .append(quoteComment(field.getComment()))
-                .append("',");
+        sql.append(identifier(field.getName())).append(" ").append(fieldType);
+
+        if (field.getDefaultValue() != null) {
+            sql.append(" DEFAULT " + quoteDefaultValue(field.getDefaultValue()));
+        }
+        sql.append(" COMMENT '").append(quoteComment(field.getComment())).append("',");
     }
 
-    private static String quoteComment(String comment) {
+    public static String quoteDefaultValue(String defaultValue) {
+        // DEFAULT current_timestamp not need quote
+        if (defaultValue.equalsIgnoreCase("current_timestamp")) {
+            return defaultValue;
+        }
+        return "'" + defaultValue + "'";
+    }
+
+    public static String quoteComment(String comment) {
         if (comment == null) {
             return "";
         } else {
@@ -248,8 +275,14 @@ public class DorisSystem implements Serializable {
         return result;
     }
 
-    private static String identifier(String name) {
+    public static String identifier(String name) {
         return "`" + name + "`";
+    }
+
+    public static String quoteTableIdentifier(String tableIdentifier) {
+        String[] dbTable = tableIdentifier.split("\\.");
+        Preconditions.checkArgument(dbTable.length == 2);
+        return identifier(dbTable[0]) + "." + identifier(dbTable[1]);
     }
 
     private static String quoteProperties(String name) {

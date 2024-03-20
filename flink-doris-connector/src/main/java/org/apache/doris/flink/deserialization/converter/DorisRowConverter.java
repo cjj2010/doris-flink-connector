@@ -47,6 +47,7 @@ import org.apache.doris.flink.serialization.RowBatch;
 import java.io.Serializable;
 import java.math.BigDecimal;
 import java.sql.Date;
+import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Arrays;
@@ -195,9 +196,11 @@ public class DorisRowConverter implements Serializable {
                 return val -> {
                     if (val instanceof LocalDateTime) {
                         return TimestampData.fromLocalDateTime((LocalDateTime) val);
+                    } else if (val instanceof Timestamp) {
+                        return TimestampData.fromTimestamp((Timestamp) val);
                     } else {
                         throw new UnsupportedOperationException(
-                                "timestamp type must be java.time.LocalDateTime, the actual type is: "
+                                "timestamp type must be java.time.LocalDateTime or java.sql.Timestamp, the actual type is: "
                                         + val.getClass().getName());
                     }
                 };
@@ -360,37 +363,48 @@ public class DorisRowConverter implements Serializable {
 
     private static Object convertMapData(MapData map, LogicalType type) {
         Map<Object, Object> result = new HashMap<>();
+        LogicalType valueType = ((MapType) type).getValueType();
+        LogicalType keyType = ((MapType) type).getKeyType();
         if (map instanceof GenericMapData) {
             GenericMapData gMap = (GenericMapData) map;
             for (Object key : ((GenericArrayData) gMap.keyArray()).toObjectArray()) {
-                result.put(key, gMap.get(key));
+
+                Object convertedKey = convertMapEntry(key, keyType);
+                Object convertedValue = convertMapEntry(gMap.get(key), valueType);
+                result.put(convertedKey, convertedValue);
             }
             return result;
-        }
-        if (map instanceof BinaryMapData) {
+        } else if (map instanceof BinaryMapData) {
             BinaryMapData bMap = (BinaryMapData) map;
-            LogicalType valueType = ((MapType) type).getValueType();
             Map<?, ?> javaMap = bMap.toJavaMap(((MapType) type).getKeyType(), valueType);
             for (Map.Entry<?, ?> entry : javaMap.entrySet()) {
-                String key = entry.getKey().toString();
-                if (LogicalTypeRoot.MAP.equals(valueType.getTypeRoot())) {
-                    result.put(key, convertMapData((MapData) entry.getValue(), valueType));
-                } else if (LogicalTypeRoot.DATE.equals(valueType.getTypeRoot())) {
-                    result.put(
-                            key,
-                            Date.valueOf(LocalDate.ofEpochDay((Integer) entry.getValue()))
-                                    .toString());
-                } else if (LogicalTypeRoot.ARRAY.equals(valueType.getTypeRoot())) {
-                    result.put(key, convertArrayData((ArrayData) entry.getValue(), valueType));
-                } else if (entry.getValue() instanceof TimestampData) {
-                    result.put(key, ((TimestampData) entry.getValue()).toTimestamp().toString());
-                } else {
-                    result.put(key, entry.getValue().toString());
-                }
+                Object convertedKey = convertMapEntry(entry.getKey(), keyType);
+                Object convertedValue = convertMapEntry(entry.getValue(), valueType);
+                result.put(convertedKey, convertedValue);
             }
             return result;
         }
         throw new UnsupportedOperationException("Unsupported map data: " + map.getClass());
+    }
+
+    /**
+     * Converts the key-value pair of MAP to the actual type.
+     *
+     * @param originValue the original value of key-value pair
+     * @param logicalType key or value logical type
+     */
+    private static Object convertMapEntry(Object originValue, LogicalType logicalType) {
+        if (LogicalTypeRoot.MAP.equals(logicalType.getTypeRoot())) {
+            return convertMapData((MapData) originValue, logicalType);
+        } else if (LogicalTypeRoot.DATE.equals(logicalType.getTypeRoot())) {
+            return Date.valueOf(LocalDate.ofEpochDay((Integer) originValue)).toString();
+        } else if (LogicalTypeRoot.ARRAY.equals(logicalType.getTypeRoot())) {
+            return convertArrayData((ArrayData) originValue, logicalType);
+        } else if (originValue instanceof TimestampData) {
+            return ((TimestampData) originValue).toTimestamp().toString();
+        } else {
+            return originValue.toString();
+        }
     }
 
     private static Object convertRowData(RowData val, int index, LogicalType type) {

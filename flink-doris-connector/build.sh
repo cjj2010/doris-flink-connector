@@ -116,7 +116,7 @@ fi
 
 selectFlink() {
   echo 'Flink-Doris-Connector supports multiple versions of flink. Which version do you need ?'
-  select flink in "1.15.x" "1.16.x" "1.17.x" "1.18.x"
+  select flink in "1.15.x" "1.16.x" "1.17.x" "1.18.x" "1.19.x"
   do
     case $flink in
       "1.15.x")
@@ -131,6 +131,9 @@ selectFlink() {
       "1.18.x")
         return 4
         ;;
+      "1.19.x")
+        return 5
+        ;;
       *)
         echo "invalid selected, exit.."
         exit 1
@@ -142,14 +145,18 @@ selectFlink() {
 FLINK_VERSION=0
 selectFlink
 flinkVer=$?
+FLINK_PYTHON_ID="flink-python"
 if [ ${flinkVer} -eq 1 ]; then
     FLINK_VERSION="1.15.0"
+    FLINK_PYTHON_ID="flink-python_2.12"
 elif [ ${flinkVer} -eq 2 ]; then
     FLINK_VERSION="1.16.0"
 elif [ ${flinkVer} -eq 3 ]; then
     FLINK_VERSION="1.17.0"
 elif [ ${flinkVer} -eq 4 ]; then
     FLINK_VERSION="1.18.0"
+elif [ ${flinkVer} -eq 5 ]; then
+    FLINK_VERSION="1.19.0"
 fi
 
 # extract major version:
@@ -160,7 +167,7 @@ FLINK_MAJOR_VERSION=0
 echo_g " flink version: ${FLINK_VERSION}, major version: ${FLINK_MAJOR_VERSION}"
 echo_g " build starting..."
 
-${MVN_BIN} clean package -Dflink.version=${FLINK_VERSION} -Dflink.major.version=${FLINK_MAJOR_VERSION} "$@"
+${MVN_BIN} clean package -Dflink.version=${FLINK_VERSION} -Dflink.major.version=${FLINK_MAJOR_VERSION} -Dflink.python.id=${FLINK_PYTHON_ID} "$@"
 
 EXIT_CODE=$?
 if [ $EXIT_CODE -eq 0 ]; then

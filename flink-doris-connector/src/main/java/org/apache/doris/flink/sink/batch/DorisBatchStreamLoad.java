@@ -35,6 +35,7 @@ import org.apache.doris.flink.sink.writer.LabelGenerator;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.entity.ByteArrayEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,6 +62,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.apache.doris.flink.sink.LoadStatus.PUBLISH_TIMEOUT;
 import static org.apache.doris.flink.sink.LoadStatus.SUCCESS;
+import static org.apache.doris.flink.sink.writer.LoadConstants.ARROW;
+import static org.apache.doris.flink.sink.writer.LoadConstants.CSV;
+import static org.apache.doris.flink.sink.writer.LoadConstants.FORMAT_KEY;
 import static org.apache.doris.flink.sink.writer.LoadConstants.LINE_DELIMITER_DEFAULT;
 import static org.apache.doris.flink.sink.writer.LoadConstants.LINE_DELIMITER_KEY;
 
@@ -87,7 +91,7 @@ public class DorisBatchStreamLoad implements Serializable {
     private final AtomicBoolean started;
     private volatile boolean loadThreadAlive = false;
     private AtomicReference<Throwable> exception = new AtomicReference<>(null);
-    private CloseableHttpClient httpClient = new HttpUtil().getHttpClient();
+    private HttpClientBuilder httpClientBuilder = new HttpUtil().getHttpClientBuilderForBatch();
     private BackendUtil backendUtil;
 
     public DorisBatchStreamLoad(
@@ -105,10 +109,15 @@ public class DorisBatchStreamLoad implements Serializable {
         this.password = dorisOptions.getPassword();
         this.loadProps = executionOptions.getStreamLoadProp();
         this.labelGenerator = labelGenerator;
-        this.lineDelimiter =
-                EscapeHandler.escapeString(
-                                loadProps.getProperty(LINE_DELIMITER_KEY, LINE_DELIMITER_DEFAULT))
-                        .getBytes();
+        if (loadProps.getProperty(FORMAT_KEY, CSV).equals(ARROW)) {
+            this.lineDelimiter = null;
+        } else {
+            this.lineDelimiter =
+                    EscapeHandler.escapeString(
+                                    loadProps.getProperty(
+                                            LINE_DELIMITER_KEY, LINE_DELIMITER_DEFAULT))
+                            .getBytes();
+        }
         this.executionOptions = executionOptions;
         this.flushQueue = new LinkedBlockingDeque<>(executionOptions.getFlushQueueSize());
         if (StringUtils.isNotBlank(dorisOptions.getTableIdentifier())) {
@@ -266,32 +275,35 @@ public class DorisBatchStreamLoad implements Serializable {
             int retry = 0;
             while (retry <= executionOptions.getMaxRetries()) {
                 LOG.info("stream load started for {} on host {}", label, hostPort);
-                try (CloseableHttpResponse response = httpClient.execute(putBuilder.build())) {
-                    int statusCode = response.getStatusLine().getStatusCode();
-                    if (statusCode == 200 && response.getEntity() != null) {
-                        String loadResult = EntityUtils.toString(response.getEntity());
-                        LOG.info("load Result {}", loadResult);
-                        RespContent respContent =
-                                OBJECT_MAPPER.readValue(loadResult, RespContent.class);
-                        if (!DORIS_SUCCESS_STATUS.contains(respContent.getStatus())) {
-                            String errMsg =
-                                    String.format(
-                                            "stream load error: %s, see more in %s",
-                                            respContent.getMessage(), respContent.getErrorURL());
-                            throw new DorisBatchLoadException(errMsg);
-                        } else {
-                            return;
+                try (CloseableHttpClient httpClient = httpClientBuilder.build()) {
+                    try (CloseableHttpResponse response = httpClient.execute(putBuilder.build())) {
+                        int statusCode = response.getStatusLine().getStatusCode();
+                        if (statusCode == 200 && response.getEntity() != null) {
+                            String loadResult = EntityUtils.toString(response.getEntity());
+                            LOG.info("load Result {}", loadResult);
+                            RespContent respContent =
+                                    OBJECT_MAPPER.readValue(loadResult, RespContent.class);
+                            if (!DORIS_SUCCESS_STATUS.contains(respContent.getStatus())) {
+                                String errMsg =
+                                        String.format(
+                                                "stream load error: %s, see more in %s",
+                                                respContent.getMessage(),
+                                                respContent.getErrorURL());
+                                throw new DorisBatchLoadException(errMsg);
+                            } else {
+                                return;
+                            }
                         }
+                        LOG.error(
+                                "stream load failed with {}, reason {}, to retry",
+                                hostPort,
+                                response.getStatusLine().toString());
+                    } catch (Exception ex) {
+                        if (retry == executionOptions.getMaxRetries()) {
+                            throw new DorisBatchLoadException("stream load error: ", ex);
+                        }
+                        LOG.error("stream load error with {}, to retry, cause by", hostPort, ex);
                     }
-                    LOG.error(
-                            "stream load failed with {}, reason {}, to retry",
-                            hostPort,
-                            response.getStatusLine().toString());
-                } catch (Exception ex) {
-                    if (retry == executionOptions.getMaxRetries()) {
-                        throw new DorisBatchLoadException("stream load error: ", ex);
-                    }
-                    LOG.error("stream load error with {}, to retry, cause by", hostPort, ex);
                 }
                 retry++;
                 // get available backend retry

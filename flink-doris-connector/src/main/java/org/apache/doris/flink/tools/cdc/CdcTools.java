@@ -20,6 +20,7 @@ package org.apache.doris.flink.tools.cdc;
 import org.apache.flink.api.java.utils.MultipleParameterTool;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.StringUtils;
 
 import org.apache.doris.flink.tools.cdc.mysql.MysqlDatabaseSync;
@@ -28,6 +29,7 @@ import org.apache.doris.flink.tools.cdc.postgres.PostgresDatabaseSync;
 import org.apache.doris.flink.tools.cdc.sqlserver.SqlServerDatabaseSync;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,12 +40,12 @@ public class CdcTools {
     private static final String ORACLE_SYNC_DATABASE = "oracle-sync-database";
     private static final String POSTGRES_SYNC_DATABASE = "postgres-sync-database";
     private static final String SQLSERVER_SYNC_DATABASE = "sqlserver-sync-database";
-    private static final List<String> EMPTY_KEYS = Arrays.asList("password");
+    private static final List<String> EMPTY_KEYS = Collections.singletonList("password");
 
     public static void main(String[] args) throws Exception {
+        System.out.println("Input args: " + Arrays.asList(args) + ".\n");
         String operation = args[0].toLowerCase();
         String[] opArgs = Arrays.copyOfRange(args, 1, args.length);
-        System.out.println();
         switch (operation) {
             case MYSQL_SYNC_DATABASE:
                 createMySQLSyncDatabase(opArgs);
@@ -65,6 +67,7 @@ public class CdcTools {
 
     private static void createMySQLSyncDatabase(String[] opArgs) throws Exception {
         MultipleParameterTool params = MultipleParameterTool.fromArgs(opArgs);
+        Preconditions.checkArgument(params.has("mysql-conf"));
         Map<String, String> mysqlMap = getConfigMap(params, "mysql-conf");
         Configuration mysqlConfig = Configuration.fromMap(mysqlMap);
         DatabaseSync databaseSync = new MysqlDatabaseSync();
@@ -73,6 +76,7 @@ public class CdcTools {
 
     private static void createOracleSyncDatabase(String[] opArgs) throws Exception {
         MultipleParameterTool params = MultipleParameterTool.fromArgs(opArgs);
+        Preconditions.checkArgument(params.has("oracle-conf"));
         Map<String, String> oracleMap = getConfigMap(params, "oracle-conf");
         Configuration oracleConfig = Configuration.fromMap(oracleMap);
         DatabaseSync databaseSync = new OracleDatabaseSync();
@@ -81,6 +85,7 @@ public class CdcTools {
 
     private static void createPostgresSyncDatabase(String[] opArgs) throws Exception {
         MultipleParameterTool params = MultipleParameterTool.fromArgs(opArgs);
+        Preconditions.checkArgument(params.has("postgres-conf"));
         Map<String, String> postgresMap = getConfigMap(params, "postgres-conf");
         Configuration postgresConfig = Configuration.fromMap(postgresMap);
         DatabaseSync databaseSync = new PostgresDatabaseSync();
@@ -89,6 +94,7 @@ public class CdcTools {
 
     private static void createSqlServerSyncDatabase(String[] opArgs) throws Exception {
         MultipleParameterTool params = MultipleParameterTool.fromArgs(opArgs);
+        Preconditions.checkArgument(params.has("sqlserver-conf"));
         Map<String, String> postgresMap = getConfigMap(params, "sqlserver-conf");
         Configuration postgresConfig = Configuration.fromMap(postgresMap);
         DatabaseSync databaseSync = new SqlServerDatabaseSync();
@@ -111,9 +117,9 @@ public class CdcTools {
         String multiToOneTarget = params.get("multi-to-one-target");
         boolean createTableOnly = params.has("create-table-only");
         boolean ignoreDefaultValue = params.has("ignore-default-value");
-        boolean useNewSchemaChange = params.has("use-new-schema-change");
         boolean singleSink = params.has("single-sink");
 
+        Preconditions.checkArgument(params.has("sink-conf"));
         Map<String, String> sinkMap = getConfigMap(params, "sink-conf");
         Map<String, String> tableMap = getConfigMap(params, "table-conf");
         Configuration sinkConfig = Configuration.fromMap(sinkMap);
@@ -133,7 +139,6 @@ public class CdcTools {
                 .setSinkConfig(sinkConfig)
                 .setTableConfig(tableMap)
                 .setCreateTableOnly(createTableOnly)
-                .setNewSchemaChange(useNewSchemaChange)
                 .setSingleSink(singleSink)
                 .create();
         databaseSync.build();
@@ -148,6 +153,12 @@ public class CdcTools {
 
     private static Map<String, String> getConfigMap(MultipleParameterTool params, String key) {
         if (!params.has(key)) {
+            System.out.println(
+                    "Can not find key ["
+                            + key
+                            + "] from args: "
+                            + params.toMap().toString()
+                            + ".\n");
             return null;
         }
 
@@ -162,7 +173,7 @@ public class CdcTools {
                 continue;
             }
 
-            System.err.println("Invalid " + key + " " + param + ".\n");
+            System.out.println("Invalid " + key + " " + param + ".\n");
             return null;
         }
         return map;

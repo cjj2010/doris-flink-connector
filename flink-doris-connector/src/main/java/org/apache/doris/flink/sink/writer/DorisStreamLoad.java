@@ -54,6 +54,9 @@ import java.util.regex.Matcher;
 import static org.apache.doris.flink.sink.LoadStatus.LABEL_ALREADY_EXIST;
 import static org.apache.doris.flink.sink.LoadStatus.SUCCESS;
 import static org.apache.doris.flink.sink.ResponseUtil.LABEL_EXIST_PATTERN;
+import static org.apache.doris.flink.sink.writer.LoadConstants.ARROW;
+import static org.apache.doris.flink.sink.writer.LoadConstants.CSV;
+import static org.apache.doris.flink.sink.writer.LoadConstants.FORMAT_KEY;
 import static org.apache.doris.flink.sink.writer.LoadConstants.LINE_DELIMITER_DEFAULT;
 import static org.apache.doris.flink.sink.writer.LoadConstants.LINE_DELIMITER_KEY;
 
@@ -82,6 +85,7 @@ public class DorisStreamLoad implements Serializable {
     private final CloseableHttpClient httpClient;
     private final ExecutorService executorService;
     private boolean loadBatchFirstRecord;
+    private volatile String currentLabel;
 
     public DorisStreamLoad(
             String hostPort,
@@ -115,11 +119,15 @@ public class DorisStreamLoad implements Serializable {
                         executionOptions.getBufferSize(),
                         executionOptions.getBufferCount(),
                         executionOptions.isUseCache());
-        lineDelimiter =
-                EscapeHandler.escapeString(
-                                streamLoadProp.getProperty(
-                                        LINE_DELIMITER_KEY, LINE_DELIMITER_DEFAULT))
-                        .getBytes();
+        if (streamLoadProp.getProperty(FORMAT_KEY, CSV).equals(ARROW)) {
+            lineDelimiter = null;
+        } else {
+            lineDelimiter =
+                    EscapeHandler.escapeString(
+                                    streamLoadProp.getProperty(
+                                            LINE_DELIMITER_KEY, LINE_DELIMITER_DEFAULT))
+                            .getBytes();
+        }
         loadBatchFirstRecord = true;
     }
 
@@ -148,8 +156,8 @@ public class DorisStreamLoad implements Serializable {
     /**
      * try to discard pending transactions with labels beginning with labelSuffix.
      *
-     * @param labelSuffix
-     * @param chkID
+     * @param labelSuffix the suffix of the stream load.
+     * @param chkID checkpoint id of task.
      * @throws Exception
      */
     public void abortPreCommit(String labelSuffix, long chkID) throws Exception {
@@ -157,8 +165,8 @@ public class DorisStreamLoad implements Serializable {
         LOG.info("abort for labelSuffix {}. start chkId {}.", labelSuffix, chkID);
         while (true) {
             try {
-                // TODO: According to label abort txn. Currently,
-                //  it can only be aborted based on txnid,
+                // TODO: According to label abort txn. Currently, it can only be aborted based on
+                // txnid,
                 //  so we must first request a streamload based on the label to get the txnid.
                 String label = labelGenerator.generateTableLabel(startChkID);
                 HttpPutBuilder builder = new HttpPutBuilder();
@@ -218,7 +226,7 @@ public class DorisStreamLoad implements Serializable {
     public void writeRecord(byte[] record) throws IOException {
         if (loadBatchFirstRecord) {
             loadBatchFirstRecord = false;
-        } else {
+        } else if (lineDelimiter != null) {
             recordStream.write(lineDelimiter);
         }
         recordStream.write(record);
@@ -239,9 +247,9 @@ public class DorisStreamLoad implements Serializable {
         throw new StreamLoadException("stream load error: " + response.getStatusLine().toString());
     }
 
-    public RespContent stopLoad(String label) throws IOException {
+    public RespContent stopLoad() throws IOException {
         recordStream.endInput();
-        LOG.info("table {} stream load stopped for {} on host {}", table, label, hostPort);
+        LOG.info("table {} stream load stopped for {} on host {}", table, currentLabel, hostPort);
         Preconditions.checkState(pendingLoadFuture != null);
         try {
             return handlePreCommitResponse(pendingLoadFuture.get());
@@ -253,7 +261,7 @@ public class DorisStreamLoad implements Serializable {
     /**
      * start write data for new checkpoint.
      *
-     * @param label
+     * @param label the label of Stream Load.
      * @throws IOException
      */
     public void startLoad(String label, boolean isResume) throws IOException {
@@ -261,6 +269,7 @@ public class DorisStreamLoad implements Serializable {
         HttpPutBuilder putBuilder = new HttpPutBuilder();
         recordStream.startInput(isResume);
         LOG.info("table {} stream load started for {} on host {}", table, label, hostPort);
+        this.currentLabel = label;
         try {
             InputStreamEntity entity = new InputStreamEntity(recordStream);
             putBuilder
@@ -277,7 +286,7 @@ public class DorisStreamLoad implements Serializable {
             pendingLoadFuture =
                     executorService.submit(
                             () -> {
-                                LOG.info("table {} start execute load", table);
+                                LOG.info("table {} start execute load for label {}", table, label);
                                 return httpClient.execute(putBuilder.build());
                             });
         } catch (Exception e) {

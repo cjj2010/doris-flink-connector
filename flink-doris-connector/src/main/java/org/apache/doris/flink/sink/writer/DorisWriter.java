@@ -19,8 +19,7 @@ package org.apache.doris.flink.sink.writer;
 
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.connector.sink2.Sink;
-import org.apache.flink.api.connector.sink2.StatefulSink;
-import org.apache.flink.api.connector.sink2.TwoPhaseCommittingSink;
+import org.apache.flink.metrics.groups.SinkWriterMetricGroup;
 import org.apache.flink.runtime.checkpoint.CheckpointIDCounter;
 import org.apache.flink.util.concurrent.ExecutorThreadFactory;
 
@@ -60,8 +59,7 @@ import static org.apache.doris.flink.sink.LoadStatus.SUCCESS;
  * @param <IN>
  */
 public class DorisWriter<IN>
-        implements StatefulSink.StatefulSinkWriter<IN, DorisWriterState>,
-                TwoPhaseCommittingSink.PrecommittingSinkWriter<IN, DorisCommittable> {
+        implements DorisAbstractWriter<IN, DorisWriterState, DorisCommittable> {
     private static final Logger LOG = LoggerFactory.getLogger(DorisWriter.class);
     private static final List<String> DORIS_SUCCESS_STATUS =
             new ArrayList<>(Arrays.asList(SUCCESS, PUBLISH_TIMEOUT));
@@ -82,6 +80,8 @@ public class DorisWriter<IN>
     private transient Thread executorThread;
     private transient volatile Exception loadException = null;
     private BackendUtil backendUtil;
+    private SinkWriterMetricGroup sinkMetricGroup;
+    private Map<String, DorisWriteMetrics> sinkMetricsMap = new ConcurrentHashMap<>();
 
     public DorisWriter(
             Sink.InitContext initContext,
@@ -96,7 +96,7 @@ public class DorisWriter<IN>
                         .orElse(CheckpointIDCounter.INITIAL_CHECKPOINT_ID - 1);
         this.curCheckpointId = lastCheckpointId + 1;
         LOG.info("restore checkpointId {}", lastCheckpointId);
-        LOG.info("labelPrefix " + executionOptions.getLabelPrefix());
+        LOG.info("labelPrefix {}", executionOptions.getLabelPrefix());
         this.labelPrefix = executionOptions.getLabelPrefix();
         this.subtaskId = initContext.getSubtaskId();
         this.scheduledExecutorService =
@@ -107,8 +107,9 @@ public class DorisWriter<IN>
         this.executionOptions = executionOptions;
         this.intervalTime = executionOptions.checkInterval();
         this.globalLoading = false;
-
+        sinkMetricGroup = initContext.metricGroup();
         initializeLoad(state);
+        serializer.initial();
     }
 
     public void initializeLoad(Collection<DorisWriterState> state) {
@@ -123,8 +124,8 @@ public class DorisWriter<IN>
         }
         // get main work thread.
         executorThread = Thread.currentThread();
-        // when uploading data in streaming mode,
-        // we need to regularly detect whether there are exceptions.
+        // when uploading data in streaming mode, we need to regularly detect whether there are
+        // exceptions.
         scheduledExecutorService.scheduleWithFixedDelay(
                 this::checkDone, 200, intervalTime, TimeUnit.MILLISECONDS);
     }
@@ -165,16 +166,25 @@ public class DorisWriter<IN>
     }
 
     @Override
-    public void write(IN in, Context context) throws IOException {
+    public void write(IN in, Context context) throws IOException, InterruptedException {
         checkLoadException();
-        String tableKey = dorisOptions.getTableIdentifier();
+        writeOneDorisRecord(serializer.serialize(in));
+    }
 
-        DorisRecord record = serializer.serialize(in);
+    @Override
+    public void flush(boolean endOfInput) throws IOException, InterruptedException {
+        writeOneDorisRecord(serializer.flush());
+    }
+
+    public void writeOneDorisRecord(DorisRecord record) throws IOException, InterruptedException {
+
         if (record == null || record.getRow() == null) {
             // ddl or value is null
             return;
         }
+
         // multi table load
+        String tableKey = dorisOptions.getTableIdentifier();
         if (record.getTableIdentifier() != null) {
             tableKey = record.getTableIdentifier();
         }
@@ -187,13 +197,22 @@ public class DorisWriter<IN>
             streamLoader.startLoad(currentLabel, false);
             loadingMap.put(tableKey, true);
             globalLoading = true;
+            registerMetrics(tableKey);
         }
         streamLoader.writeRecord(record.getRow());
     }
 
-    @Override
-    public void flush(boolean flush) throws IOException, InterruptedException {
-        // No action is triggered, everything is in the precommit method
+    @VisibleForTesting
+    public void setSinkMetricGroup(SinkWriterMetricGroup sinkMetricGroup) {
+        this.sinkMetricGroup = sinkMetricGroup;
+    }
+
+    public void registerMetrics(String tableKey) {
+        if (sinkMetricsMap.containsKey(tableKey)) {
+            return;
+        }
+        DorisWriteMetrics metrics = DorisWriteMetrics.of(sinkMetricGroup, tableKey);
+        sinkMetricsMap.put(tableKey, metrics);
     }
 
     @Override
@@ -214,13 +233,16 @@ public class DorisWriter<IN>
                 continue;
             }
             DorisStreamLoad dorisStreamLoad = streamLoader.getValue();
-            LabelGenerator labelGenerator = getLabelGenerator(tableIdentifier);
-            String currentLabel = labelGenerator.generateTableLabel(curCheckpointId);
-            RespContent respContent = dorisStreamLoad.stopLoad(currentLabel);
+            RespContent respContent = dorisStreamLoad.stopLoad();
+            // refresh metrics
+            if (sinkMetricsMap.containsKey(tableIdentifier)) {
+                DorisWriteMetrics dorisWriteMetrics = sinkMetricsMap.get(tableIdentifier);
+                dorisWriteMetrics.flush(respContent);
+            }
             if (!DORIS_SUCCESS_STATUS.contains(respContent.getStatus())) {
                 String errMsg =
                         String.format(
-                                "tabel {} stream load error: %s, see more in %s",
+                                "table %s stream load error: %s, see more in %s",
                                 tableIdentifier,
                                 respContent.getMessage(),
                                 respContent.getErrorURL());
@@ -358,6 +380,11 @@ public class DorisWriter<IN>
         this.dorisStreamLoadMap = streamLoadMap;
     }
 
+    @VisibleForTesting
+    public void setDorisMetricsMap(Map<String, DorisWriteMetrics> metricsMap) {
+        this.sinkMetricsMap = metricsMap;
+    }
+
     @Override
     public void close() throws Exception {
         LOG.info("Close DorisWriter.");
@@ -369,5 +396,6 @@ public class DorisWriter<IN>
                 dorisStreamLoad.close();
             }
         }
+        serializer.close();
     }
 }

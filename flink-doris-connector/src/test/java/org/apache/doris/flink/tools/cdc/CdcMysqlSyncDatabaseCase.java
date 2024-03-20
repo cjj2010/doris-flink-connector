@@ -64,7 +64,7 @@ public class CdcMysqlSyncDatabaseCase {
 
         Map<String, String> tableConfig = new HashMap<>();
         tableConfig.put("replication_num", "1");
-
+        tableConfig.put("table-buckets", "tbl1:10,tbl2:20,a.*:30,b.*:40,.*:50");
         // String includingTables = "tbl1|tbl2|tbl3";
         String includingTables = "a_.*|b_.*|c";
         String excludingTables = "";
@@ -72,6 +72,7 @@ public class CdcMysqlSyncDatabaseCase {
         String multiToOneTarget = "a|b";
         boolean ignoreDefaultValue = false;
         boolean useNewSchemaChange = false;
+        boolean singleSink = false;
         DatabaseSync databaseSync = new MysqlDatabaseSync();
         databaseSync
                 .setEnv(env)
@@ -88,6 +89,7 @@ public class CdcMysqlSyncDatabaseCase {
                 .setTableConfig(tableConfig)
                 .setCreateTableOnly(false)
                 .setNewSchemaChange(useNewSchemaChange)
+                .setSingleSink(singleSink)
                 .create();
         databaseSync.build();
         env.execute(String.format("MySQL-Doris Database Sync: %s", database));
